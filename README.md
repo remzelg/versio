@@ -104,6 +104,11 @@ so there is no stray binary that would bypass updates. `make -C client install`
 is idempotent: re-running it replaces the launcher and keeps the installed
 releases. `make -C client uninstall` removes both.
 
+`make -C client install` builds from source. How customers without Go would
+get versio the first time (install scripts, published launchers, and a
+first-run download) is designed in [docs/first-install.md](docs/first-install.md)
+but not implemented.
+
 For a throwaway install that doesn't touch `~`, `make -C client install-dev`
 resets `client/.dev-install` to 0.1.0, and `make -C client run` or
 `make -C client version` runs the launcher against it.
@@ -219,6 +224,9 @@ uploaded to any static host.
 
 ## Known limitations
 
+- There is no installer for customers yet: first install is from source
+  (`make -C client install`). The planned design is in
+  [docs/first-install.md](docs/first-install.md).
 - The launcher itself never updates. Shipping a launcher fix needs a separate
   mechanism, e.g. a `min_launcher_version` manifest field.
 - A release that validates (`--version` works) but misbehaves later is not
@@ -248,6 +256,14 @@ The brief invites writing down questions and assuming an answer.
   static host?
   **Assumed:** Any static host. Releases are plain files with a signed manifest.
   `versio-release serve` exists only for local development.
+- **Q:** How do customers get versio the first time?
+  **Assumed:** A one-line install script per shell family (`install.sh` for
+  macOS and Linux, `install.ps1` for Windows) detects the platform and
+  installs the matching launcher. The launcher then downloads the app on its
+  first run and handles all later updates. Go was chosen so that one codebase
+  cross-compiles to every target as a self-contained binary, which keeps this
+  install step the only platform-specific one. See
+  [docs/first-install.md](docs/first-install.md).
 - **Q:** Should users see update activity?
   **Assumed:** Minimally. A successful update prints one line to stderr
   (`versio: updated 0.1.0 -> 0.2.0`), and stdout stays the application's. Failed

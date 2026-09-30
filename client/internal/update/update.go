@@ -66,6 +66,9 @@ func Run(ctx context.Context, cfg Config, root string, cur active.State) (Result
 	if !isNewer(m.Version, cur.ActiveVersion) {
 		return Result{State: cur}, nil
 	}
+	// The manifest check already requires semver, which is path safe. Checking
+	// again with the install layout's own rule keeps the version safe to use as
+	// a directory name even if manifest rules are ever relaxed.
 	if err := active.ValidateVersion(m.Version); err != nil {
 		return Result{}, fmt.Errorf("manifest version: %w", err)
 	}

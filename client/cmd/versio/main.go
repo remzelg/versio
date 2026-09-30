@@ -25,7 +25,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case len(args) == 1 && args[0] == "--version":
 		fmt.Fprintf(stdout, "%s\n", version)
 		return 0
-	// Error in trying to fetch current version
+	// Anything else is a usage error
 	default:
 		io.WriteString(stderr, usage)
 		return 2

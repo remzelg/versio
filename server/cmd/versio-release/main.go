@@ -35,16 +35,26 @@ const usage = `usage:
   versio-release serve [-dir dir] [-addr host:port] [-cert file -key file]
 `
 
+// errUsage marks errors caused by a bad command line; main follows them with
+// the usage text.
+var errUsage = errors.New("usage error")
+
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "versio-release: %v\n", err)
-		os.Exit(1)
+	err := run(os.Args[1:], os.Stdout)
+	if err == nil {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "versio-release: %v\n", err)
+	if errors.Is(err, errUsage) {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	os.Exit(1)
 }
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("missing command\n" + usage)
+		return fmt.Errorf("missing command: %w", errUsage)
 	}
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "keygen":
@@ -54,7 +64,7 @@ func run(args []string, stdout io.Writer) error {
 	case "serve":
 		return serve(rest, stdout)
 	default:
-		return fmt.Errorf("unknown command %q\n%s", cmd, usage)
+		return fmt.Errorf("unknown command %q: %w", cmd, errUsage)
 	}
 }
 
