@@ -1,0 +1,5 @@
+/client/bin/
+/client/.dev-install/
+/server/dist/
+# Signing keys. The private key must never be committed.
+/server/.keys/
