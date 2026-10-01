@@ -5,11 +5,15 @@
 //	├── stable/
 //	│   ├── manifest.json
 //	│   └── manifest.json.sig
-//	└── releases/<version>/
-//	    └── versio_<version>_<goos>_<goarch>.zip   (one per target)
+//	├── releases/<version>/
+//	│   └── versio_<version>_<goos>_<goarch>.zip   (one per target)
+//	└── launcher/
+//	    ├── versio-launcher_<goos>_<goarch>[.exe]  (one per target)
+//	    └── SHA256SUMS
 //
-// The tree can be uploaded as-is to any static file host. Manifest artifact
-// URLs are relative, so the tree works under any base URL.
+// plus the install scripts at <dir>/. The tree can be uploaded as-is to any
+// static file host. Manifest artifact URLs are relative, so the tree works
+// under any base URL.
 package publish
 
 import (
@@ -24,6 +28,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/remycarr/versio/client/release"
@@ -53,6 +58,16 @@ var DefaultTargets = []Target{
 type Binary struct {
 	Target
 	Path string
+}
+
+// LauncherName returns the published file name of the launcher for t, which
+// the install scripts construct the same way.
+func LauncherName(t Target) string {
+	name := "versio-launcher_" + t.GOOS + "_" + t.GOARCH
+	if t.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
 }
 
 // ManifestPath returns the manifest's location within the tree rooted at dir.
@@ -140,6 +155,40 @@ func Write(dir, version string, bins []Binary, priv ed25519.PrivateKey) (release
 		return release.Manifest{}, err
 	}
 	return m, nil
+}
+
+// WriteInstaller publishes what a first install needs: the launchers in
+// <dir>/versio/launcher with a SHA256SUMS file listing them, and scripts (by
+// file name) in <dir>. Unlike releases, these are replaced on every build, so
+// the scripts always install the newest launcher. They are not signed: the
+// checksums only catch corrupted or mismatched downloads, and every release
+// the launcher installs is verified with the key embedded in it.
+func WriteInstaller(dir string, launchers []Binary, scripts map[string][]byte) error {
+	launcherDir := filepath.Join(dir, "versio", "launcher")
+	if err := os.MkdirAll(launcherDir, 0o755); err != nil {
+		return err
+	}
+	var sums strings.Builder
+	for _, b := range launchers {
+		data, err := os.ReadFile(b.Path)
+		if err != nil {
+			return err
+		}
+		name := LauncherName(b.Target)
+		if err := writeFileAtomic(filepath.Join(launcherDir, name), data); err != nil {
+			return err
+		}
+		fmt.Fprintf(&sums, "%x  %s\n", sha256.Sum256(data), name) // sha256sum format
+	}
+	if err := writeFileAtomic(filepath.Join(launcherDir, "SHA256SUMS"), []byte(sums.String())); err != nil {
+		return err
+	}
+	for name, data := range scripts {
+		if err := writeFileAtomic(filepath.Join(dir, name), data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CheckVersion requires version to be a valid, installable semver that is

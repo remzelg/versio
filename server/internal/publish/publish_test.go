@@ -194,3 +194,36 @@ func TestArchivesMatchProtocol(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteInstaller(t *testing.T) {
+	dir := t.TempDir()
+	bin, err := os.ReadFile(self(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchers := []Binary{{Target{"windows", "arm64"}, self(t)}, {Target{"linux", "amd64"}, self(t)}}
+	scripts := map[string][]byte{"install.sh": []byte("#!/bin/sh\n")}
+
+	// Twice: the installer is replaced on every build.
+	for range 2 {
+		if err := WriteInstaller(dir, launchers, scripts); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sum := sha256.Sum256(bin)
+	want := hex.EncodeToString(sum[:]) + "  versio-launcher_windows_arm64.exe\n" +
+		hex.EncodeToString(sum[:]) + "  versio-launcher_linux_amd64\n"
+	launcherDir := filepath.Join(dir, "versio", "launcher")
+	if got, err := os.ReadFile(filepath.Join(launcherDir, "SHA256SUMS")); err != nil || string(got) != want {
+		t.Fatalf("SHA256SUMS = %q, %v; want %q", got, err, want)
+	}
+	for _, name := range []string{"versio-launcher_windows_arm64.exe", "versio-launcher_linux_amd64"} {
+		if got, err := os.ReadFile(filepath.Join(launcherDir, name)); err != nil || !bytes.Equal(got, bin) {
+			t.Errorf("%s: wrong contents (err %v)", name, err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "install.sh")); err != nil || string(got) != "#!/bin/sh\n" {
+		t.Errorf("install.sh = %q, %v", got, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -41,8 +42,10 @@ type Options struct {
 // other argument (including --version) is forwarded unchanged.
 //
 // Before running the payload, Run installs and activates a newer release if
-// one is available, so the same invocation already runs the new version.
-// "--version" never triggers an update, keeping it offline and deterministic.
+// one is available, so the same invocation already runs the new version. If
+// nothing is installed yet (no current.json), it installs the latest release
+// first. "--version" never triggers an update or an install, keeping it
+// offline and deterministic.
 func Run(opts Options, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root, childArgs, err := parseArgs(args)
 	if err != nil {
@@ -61,12 +64,23 @@ func Run(opts Options, args []string, stdin io.Reader, stdout, stderr io.Writer)
 	}
 
 	state, err := active.Load(root)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && wantsUpdate(opts, childArgs):
+		// Nothing is installed yet, e.g. right after the install script put
+		// the launcher on PATH. Install the latest release through the same
+		// verified path as any update. A current.json that exists but is
+		// invalid is still an error below: that is damage, not a new machine.
+		res, err := runUpdate(opts, root, active.State{})
+		if err != nil {
+			fmt.Fprintf(stderr, "versio-launcher: versio is not installed yet and the latest release could not be installed: %v\n", err)
+			return 1
+		}
+		state = res.State
+		fmt.Fprintf(stderr, "versio: installed %s\n", state.ActiveVersion)
+	case err != nil:
 		fmt.Fprintf(stderr, "versio-launcher: no usable active release in %s: %v\n", root, err)
 		return 1
-	}
-
-	if wantsUpdate(opts, childArgs) {
+	case wantsUpdate(opts, childArgs):
 		state = tryUpdate(opts, root, state, stderr)
 	}
 
@@ -109,14 +123,7 @@ func wantsUpdate(opts Options, childArgs []string) bool {
 // tryUpdate runs one update attempt and returns the state to launch. Any
 // failure keeps the current state.
 func tryUpdate(opts Options, root string, cur active.State, stderr io.Writer) active.State {
-	cfg := opts.Update
-	if cfg.Client == nil {
-		cfg.Client = newHTTPClient()
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), updateTimeout)
-	defer cancel()
-
-	res, err := update.Run(ctx, cfg, root, cur)
+	res, err := runUpdate(opts, root, cur)
 	if err != nil {
 		if opts.Debug {
 			fmt.Fprintf(stderr, "versio-launcher: update skipped: %v\n", err)
@@ -127,6 +134,17 @@ func tryUpdate(opts Options, root string, cur active.State, stderr io.Writer) ac
 		fmt.Fprintf(stderr, "versio: updated %s -> %s\n", cur.ActiveVersion, res.State.ActiveVersion)
 	}
 	return res.State
+}
+
+// runUpdate runs one update attempt, bounded by updateTimeout.
+func runUpdate(opts Options, root string, cur active.State) (update.Result, error) {
+	cfg := opts.Update
+	if cfg.Client == nil {
+		cfg.Client = newHTTPClient()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), updateTimeout)
+	defer cancel()
+	return update.Run(ctx, cfg, root, cur)
 }
 
 // newHTTPClient fails fast when the release host is unreachable or slow to

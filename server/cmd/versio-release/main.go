@@ -1,12 +1,14 @@
 // Command versio-release creates signing keys and publishes signed releases.
 //
 //	versio-release keygen [-out .keys]
-//	versio-release build -version 0.2.0 [-key .keys/versio.key] [-out dist] [-pkg <payload package>]
+//	versio-release build -version 0.2.0 [-key .keys/versio.key] [-out dist] [-pkg <payload package>] [-base-url URL]
 //	versio-release serve [-dir dist] [-addr 127.0.0.1:8080] [-cert file -key file]
 //
 // build cross-compiles the payload for each target, packages the binaries,
 // and writes a signed manifest into a static tree under -out, ready to be
-// served by any static file host. serve is such a host, for local use.
+// served by any static file host. It also publishes the launchers and install
+// scripts that a first install downloads, configured for the host at
+// -base-url. serve is such a host, for local use.
 package main
 
 import (
@@ -20,6 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/remycarr/versio/client/release"
+	"github.com/remycarr/versio/server/install"
 	"github.com/remycarr/versio/server/internal/publish"
 	"github.com/remycarr/versio/server/internal/signing"
 )
@@ -29,9 +32,13 @@ import (
 // whatever go.mod requires (today: ../client, via replace).
 const payloadPackage = "github.com/remycarr/versio/client/cmd/versio"
 
+// launcherPackage is the launcher that the install scripts put on PATH,
+// resolved the same way.
+const launcherPackage = "github.com/remycarr/versio/client/cmd/versio-launcher"
+
 const usage = `usage:
   versio-release keygen [-out dir]
-  versio-release build -version X.Y.Z [-key file] [-out dir] [-pkg path]
+  versio-release build -version X.Y.Z [-key file] [-out dir] [-pkg path] [-base-url URL]
   versio-release serve [-dir dir] [-addr host:port] [-cert file -key file]
 `
 
@@ -115,6 +122,7 @@ func build(args []string, stdout io.Writer) error {
 	keyPath := fs.String("key", filepath.Join(".keys", "versio.key"), "Ed25519 private key file")
 	out := fs.String("out", "dist", "static release tree to write into")
 	pkg := fs.String("pkg", payloadPackage, "Go package of the payload")
+	baseURL := fs.String("base-url", install.DefaultBaseURL, "URL the tree will be served from")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -140,14 +148,24 @@ func build(args []string, stdout io.Writer) error {
 	}
 	defer os.RemoveAll(work)
 
-	var bins []publish.Binary
+	// The launcher trusts this key and checks for updates at this URL.
+	manifestURL := *baseURL + "/versio/" + publish.Channel + "/" + release.ManifestName
+	launcherFlags := "-X main.manifestURL=" + manifestURL +
+		" -X main.publicKey=" + signing.EncodeKey(priv.Public().(ed25519.PublicKey))
+
+	var bins, launchers []publish.Binary
 	for _, t := range publish.DefaultTargets {
-		bin := filepath.Join(work, t.GOOS+"_"+t.GOARCH, release.BinaryName(t.GOOS))
 		fmt.Fprintf(stdout, "building %s\n", t)
-		if err := goBuild(*pkg, *version, t, bin); err != nil {
+		bin := filepath.Join(work, t.GOOS+"_"+t.GOARCH, release.BinaryName(t.GOOS))
+		if err := goBuild(*pkg, "-X main.version="+*version, t, bin); err != nil {
 			return fmt.Errorf("build %s: %w", t, err)
 		}
 		bins = append(bins, publish.Binary{Target: t, Path: bin})
+		launcher := filepath.Join(work, t.GOOS+"_"+t.GOARCH, publish.LauncherName(t))
+		if err := goBuild(launcherPackage, launcherFlags, t, launcher); err != nil {
+			return fmt.Errorf("build launcher %s: %w", t, err)
+		}
+		launchers = append(launchers, publish.Binary{Target: t, Path: launcher})
 	}
 
 	m, err := publish.Write(*out, *version, bins, priv)
@@ -156,16 +174,25 @@ func build(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "published %s with %d artifact(s); manifest at %s\n",
 		m.Version, len(m.Artifacts), publish.ManifestPath(*out))
+
+	scripts, err := install.Scripts(*baseURL)
+	if err != nil {
+		return err
+	}
+	if err := publish.WriteInstaller(*out, launchers, scripts); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "published launchers; install with: curl -fsSL %s/install.sh | sh\n", *baseURL)
 	return nil
 }
 
-// goBuild cross-compiles pkg for t with the version stamped in. CGO is off so
-// cross-compilation needs no C toolchain; -trimpath keeps local paths out of
-// the binary.
-func goBuild(pkg, version string, t publish.Target, out string) error {
+// goBuild cross-compiles pkg for t, adding ldflags (such as -X settings) to
+// the linker flags. CGO is off so cross-compilation needs no C toolchain;
+// -trimpath keeps local paths out of the binary.
+func goBuild(pkg, ldflags string, t publish.Target, out string) error {
 	cmd := exec.Command("go", "build",
 		"-trimpath",
-		"-ldflags", "-s -w -X main.version="+version,
+		"-ldflags", "-s -w "+ldflags,
 		"-o", out,
 		pkg)
 	cmd.Env = append(os.Environ(), "GOOS="+t.GOOS, "GOARCH="+t.GOARCH, "CGO_ENABLED=0")

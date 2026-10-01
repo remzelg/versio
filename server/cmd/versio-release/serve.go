@@ -39,7 +39,7 @@ func serve(args []string, stdout io.Writer) error {
 	logger := log.New(stdout, "", log.LstdFlags)
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           logRequests(logger, noCacheManifest(http.FileServer(http.Dir(*dir)))),
+		Handler:           logRequests(logger, noCacheMutable(http.FileServer(http.Dir(*dir)))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -71,11 +71,12 @@ func serve(args []string, stdout io.Writer) error {
 	}
 }
 
-// noCacheManifest stops caches from serving a stale manifest after a new
-// release is published. Release archives are immutable and may be cached.
-func noCacheManifest(next http.Handler) http.Handler {
+// noCacheMutable stops caches from serving a stale manifest, launcher, or
+// install script after a new build. Release archives are immutable and may be
+// cached.
+func noCacheMutable(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/"+publish.Channel+"/") {
+		if !strings.Contains(r.URL.Path, "/releases/") {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		next.ServeHTTP(w, r)

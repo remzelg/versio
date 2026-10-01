@@ -229,3 +229,45 @@ func TestRunUpdateFailureRunsCurrentRelease(t *testing.T) {
 		t.Fatalf("debug stderr %q lacks failure report", errs)
 	}
 }
+
+func TestRunFirstRunInstallsLatestRelease(t *testing.T) {
+	t.Setenv("VERSIO_TEST_HELPER", "1")
+	root := filepath.Join(t.TempDir(), "versio") // does not exist yet
+	_, opts := updateOptions(t)
+
+	code, out, errs := runWith(t, opts, "--root", root)
+	if code != 0 || out != "release=0.2.0 args=[]\n" || !strings.Contains(errs, "installed 0.2.0") {
+		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
+	}
+	s, err := active.Load(root)
+	if err != nil || s != (active.State{ActiveVersion: "0.2.0"}) {
+		t.Fatalf("state = %+v, err = %v", s, err)
+	}
+}
+
+func TestRunFirstRunFailureExplains(t *testing.T) {
+	root := t.TempDir()
+	h, opts := updateOptions(t)
+	h.Set(releasetest.ManifestPath+release.SignatureSuffix, []byte("bogus"))
+
+	code, out, errs := runWith(t, opts, "--root", root)
+	if code == 0 || out != "" || !strings.Contains(errs, "not installed yet") {
+		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
+	}
+	if _, err := os.Stat(filepath.Join(root, active.StateFile)); !os.IsNotExist(err) {
+		t.Fatalf("current.json after failed install: %v", err)
+	}
+}
+
+func TestRunFirstRunVersionStaysOffline(t *testing.T) {
+	root := t.TempDir()
+	h, opts := updateOptions(t)
+
+	code, _, errs := runWith(t, opts, "--root", root, "--version")
+	if code == 0 || !strings.Contains(errs, active.StateFile) {
+		t.Fatalf("got code=%d stderr=%q", code, errs)
+	}
+	if n := h.Requests(""); n != 0 {
+		t.Fatalf("--version made %d network requests", n)
+	}
+}
