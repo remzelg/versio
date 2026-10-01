@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remycarr/versio/client/release"
 	"github.com/remycarr/versio/server/internal/publish"
 )
 
@@ -39,7 +38,7 @@ func serve(args []string, stdout io.Writer) error {
 	logger := log.New(stdout, "", log.LstdFlags)
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           logRequests(logger, noCacheMutable(http.FileServer(http.Dir(*dir)))),
+		Handler:           logFailures(logger, noCacheMutable(http.FileServer(http.Dir(*dir)))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -47,8 +46,7 @@ func serve(args []string, stdout io.Writer) error {
 	if *cert != "" {
 		scheme = "https"
 	}
-	logger.Printf("serving %s at %s://%s/versio/%s/%s (Ctrl+C to stop)",
-		*dir, scheme, *addr, publish.Channel, release.ManifestName)
+	logger.Printf("serving %s at %s://%s (Ctrl+C to stop)", *dir, scheme, *addr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -93,10 +91,15 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-func logRequests(logger *log.Logger, next http.Handler) http.Handler {
+// logFailures logs requests that fail (status 400 and above), such as a
+// client asking for a file that was never published. Successful requests are
+// not logged, to keep the output quiet.
+func logFailures(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Printf("%s %s %d", r.Method, r.URL.Path, rec.status)
+		if rec.status >= 400 {
+			logger.Printf("%s %s %d", r.Method, r.URL.Path, rec.status)
+		}
 	})
 }

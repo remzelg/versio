@@ -24,7 +24,7 @@ var (
 const (
 	envManifestURL = "VERSIO_MANIFEST_URL" // point at another channel or host
 	envNoUpdate    = "VERSIO_NO_UPDATE"    // "1" disables update checks
-	envDebug       = "VERSIO_DEBUG"        // "1" reports update failures
+	envDebug       = "VERSIO_DEBUG"        // "1" reports update failures and error details
 )
 
 func main() {
@@ -40,7 +40,7 @@ func options() launcher.Options {
 	if err != nil {
 		// A bad embedded key is a build bug; say so rather than silently
 		// never updating.
-		fmt.Fprintf(os.Stderr, "versio-launcher: updates disabled: embedded %v\n", err)
+		fmt.Fprintf(os.Stderr, "versio: updates disabled: embedded %v\n", err)
 		return opts
 	}
 	url := manifestURL

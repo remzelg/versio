@@ -29,14 +29,13 @@ main() {
 	tmp="$(mktemp -d)"
 	trap 'rm -rf "$tmp"' EXIT
 
-	say "downloading versio for $os/$arch from $base_url"
-	curl -fsSL -o "$tmp/$name" "$url/$name"
-	curl -fsSL -o "$tmp/SHA256SUMS" "$url/SHA256SUMS"
+	say "Installing versio..."
+	curl -fsSL -o "$tmp/$name" "$url/$name" || fail "could not download versio from $base_url"
+	curl -fsSL -o "$tmp/SHA256SUMS" "$url/SHA256SUMS" || fail "could not download versio from $base_url"
 
 	expected="$(awk -v f="$name" '$2 == f { print $1 }' "$tmp/SHA256SUMS")"
-	[ -n "$expected" ] || fail "SHA256SUMS has no entry for $name"
-	actual="$(sha256 "$tmp/$name")"
-	[ "$actual" = "$expected" ] || fail "checksum mismatch for $name (expected $expected, got $actual)"
+	[ -n "$expected" ] || fail "could not verify the download; please try again"
+	[ "$(sha256 "$tmp/$name")" = "$expected" ] || fail "the download was corrupted; please try again"
 
 	# Copy next to the destination, then rename, so a partly written file is
 	# never on PATH. Rerunning replaces only the launcher; installed releases
@@ -45,28 +44,31 @@ main() {
 	cp "$tmp/$name" "$bin_dir/.versio.tmp"
 	chmod 755 "$bin_dir/.versio.tmp"
 	mv -f "$bin_dir/.versio.tmp" "$bin_dir/versio"
-	say "installed $bin_dir/versio"
 
-	# First run installs the app. stdin is redirected because under
-	# "curl | sh" it is the rest of this script.
-	if ! "$bin_dir/versio" </dev/null; then
-		warn "could not download the app yet; running versio will retry"
+	# First run installs the app. Its output is only shown if it fails.
+	# stdin is redirected because under "curl | sh" it is the rest of this
+	# script.
+	if "$bin_dir/versio" </dev/null >/dev/null 2>"$tmp/first-run"; then
+		result="versio $("$bin_dir/versio" --version) is installed."
+	else
+		cat "$tmp/first-run" >&2
+		result="versio is installed, but could not finish setting up."
 	fi
 
 	add_to_path
-	say "uninstall with: rm -f \"$bin_dir/versio\" && rm -rf ~/.versio"
+	say "$result $next"
 }
 
 detect_platform() {
 	case "$(uname -s)" in
 	Darwin) os=darwin ;;
 	Linux) os=linux ;;
-	*) fail "unsupported OS $(uname -s); on Windows, use install.ps1" ;;
+	*) fail "this system ($(uname -s)) is not supported; on Windows, run in PowerShell: irm $base_url/install.ps1 | iex" ;;
 	esac
 	case "$(uname -m)" in
 	x86_64 | amd64) arch=amd64 ;;
 	arm64 | aarch64) arch=arm64 ;;
-	*) fail "unsupported CPU $(uname -m)" ;;
+	*) fail "this processor ($(uname -m)) is not supported" ;;
 	esac
 	# A terminal running under Rosetta reports x86_64 on Apple Silicon;
 	# install the native build instead.
@@ -87,16 +89,18 @@ sha256() {
 }
 
 # add_to_path appends bin_dir to PATH in the user's shell profile, unless it
-# is already on PATH or VERSIO_NO_MODIFY_PATH=1.
+# is already on PATH or VERSIO_NO_MODIFY_PATH=1. It sets next to what the
+# user should do to start versio.
 add_to_path() {
+	next="Run: versio"
 	case ":$PATH:" in
 	*":$bin_dir:"*) return ;;
 	esac
-	line="export PATH=\"$bin_dir:\$PATH\""
 	if [ "${VERSIO_NO_MODIFY_PATH:-}" = 1 ]; then
-		say "$bin_dir is not on PATH; add this to your shell profile: $line"
+		next="Add $bin_dir to your PATH, then run: versio"
 		return
 	fi
+	line="export PATH=\"$bin_dir:\$PATH\""
 	case "$(basename "${SHELL:-sh}")" in
 	zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
 	bash) [ "$os" = darwin ] && profile="$HOME/.bash_profile" || profile="$HOME/.bashrc" ;;
@@ -104,15 +108,13 @@ add_to_path() {
 	esac
 	if ! grep -qsF "$line" "$profile"; then
 		printf '\n# Added by the versio installer\n%s\n' "$line" >>"$profile"
-		say "added $bin_dir to PATH in $profile"
 	fi
-	say "open a new terminal, or run: $line"
+	next="Open a new terminal, then run: versio"
 }
 
-say() { printf 'versio-install: %s\n' "$1"; }
-warn() { printf 'versio-install: warning: %s\n' "$1" >&2; }
+say() { printf '%s\n' "$1"; }
 fail() {
-	printf 'versio-install: error: %s\n' "$1" >&2
+	printf 'versio: install failed: %s\n' "$1" >&2
 	exit 1
 }
 

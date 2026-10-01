@@ -153,9 +153,9 @@ func build(args []string, stdout io.Writer) error {
 	launcherFlags := "-X main.manifestURL=" + manifestURL +
 		" -X main.publicKey=" + signing.EncodeKey(priv.Public().(ed25519.PublicKey))
 
+	fmt.Fprintf(stdout, "building %s for %d platforms\n", *version, len(publish.DefaultTargets))
 	var bins, launchers []publish.Binary
 	for _, t := range publish.DefaultTargets {
-		fmt.Fprintf(stdout, "building %s\n", t)
 		bin := filepath.Join(work, t.GOOS+"_"+t.GOARCH, release.BinaryName(t.GOOS))
 		if err := goBuild(*pkg, "-X main.version="+*version, t, bin); err != nil {
 			return fmt.Errorf("build %s: %w", t, err)
@@ -168,12 +168,9 @@ func build(args []string, stdout io.Writer) error {
 		launchers = append(launchers, publish.Binary{Target: t, Path: launcher})
 	}
 
-	m, err := publish.Write(*out, *version, bins, priv)
-	if err != nil {
+	if _, err := publish.Write(*out, *version, bins, priv); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "published %s with %d artifact(s); manifest at %s\n",
-		m.Version, len(m.Artifacts), publish.ManifestPath(*out))
 
 	scripts, err := install.Scripts(*baseURL)
 	if err != nil {
@@ -182,7 +179,7 @@ func build(args []string, stdout io.Writer) error {
 	if err := publish.WriteInstaller(*out, launchers, scripts); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "published launchers; install with: curl -fsSL %s/install.sh | sh\n", *baseURL)
+	fmt.Fprintf(stdout, "published %s to %s\ninstall with: curl -fsSL %s/install.sh | sh\n", *version, *out, *baseURL)
 	return nil
 }
 

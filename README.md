@@ -104,9 +104,10 @@ server/dist/
 make -C server serve      # go run ./cmd/versio-release serve
 ```
 
-This serves `server/dist/` at `http://127.0.0.1:8080` until Ctrl+C. Pass
-`-cert` and `-key` to serve HTTPS. A new release can be published while the
-server is running; clients see it on their next launch.
+This serves `server/dist/` at `http://127.0.0.1:8080` until Ctrl+C. Only
+failed requests (such as a 404 for a missing file) are logged. Pass `-cert`
+and `-key` to serve HTTPS. A new release can be published while the server is
+running; clients see it on their next launch.
 
 `serve` is only a local stand-in. `dist/` is a plain folder of static files
 and can be uploaded to any static host instead. The launchers and scripts
@@ -154,11 +155,12 @@ The script:
    latest release, verifies it the same way as any update, and runs it.
 
 ```text
-versio-install: downloading versio for linux/amd64 from http://127.0.0.1:8080
-versio-install: installed /home/remy/.local/bin/versio
-versio: installed 0.2.0
-Your version is 0.2.0
+Installing versio...
+versio 0.2.0 is installed. Open a new terminal, then run: versio
 ```
+
+If something goes wrong, the script prints one `versio: install failed: …`
+line saying what to do.
 
 |                    | macOS / Linux          | Windows                                |
 |--------------------|------------------------|----------------------------------------|
@@ -242,11 +244,11 @@ missing or broken, the launcher runs `previous_version` instead.
 - The launcher itself is not updated; re-running the install script replaces
   it.
 
-| Variable              | Effect                                     |
-|-----------------------|--------------------------------------------|
-| `VERSIO_NO_UPDATE=1`  | Skip update checks.                        |
-| `VERSIO_DEBUG=1`      | Print why an update attempt was skipped.   |
-| `VERSIO_MANIFEST_URL` | Check a different manifest URL.            |
+| Variable              | Effect                                                          |
+|-----------------------|-----------------------------------------------------------------|
+| `VERSIO_NO_UPDATE=1`  | Skip update checks.                                             |
+| `VERSIO_DEBUG=1`      | Print why an update was skipped, and the details of any error.  |
+| `VERSIO_MANIFEST_URL` | Check a different manifest URL.                                 |
 
 The public key cannot be overridden: it comes only from the build.
 

@@ -32,8 +32,9 @@ type Options struct {
 	// Update configures update-on-launch. Updates are skipped when
 	// Update.ManifestURL or Update.PublicKey is unset.
 	Update update.Config
-	// Debug reports update failures on stderr. Otherwise they are silent,
-	// so an offline user is not warned on every launch.
+	// Debug reports update failures on stderr and adds the underlying error
+	// to other messages. Otherwise update failures are silent, so an offline
+	// user is not warned on every launch.
 	Debug bool
 }
 
@@ -49,17 +50,17 @@ type Options struct {
 func Run(opts Options, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root, childArgs, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "versio-launcher: %v\n", err)
+		fmt.Fprintf(stderr, "versio: %v\n", err)
 		return 2
 	}
 	if root == "" {
 		if root, err = defaultRoot(); err != nil {
-			fmt.Fprintf(stderr, "versio-launcher: %v\n", err)
+			fmt.Fprintf(stderr, "versio: %v\n", err)
 			return 1
 		}
 	}
 	if root, err = filepath.Abs(root); err != nil {
-		fmt.Fprintf(stderr, "versio-launcher: resolve root: %v\n", err)
+		fmt.Fprintf(stderr, "versio: resolve install folder: %v\n", err)
 		return 1
 	}
 
@@ -72,21 +73,24 @@ func Run(opts Options, args []string, stdin io.Reader, stdout, stderr io.Writer)
 		// invalid is still an error below: that is damage, not a new machine.
 		res, err := runUpdate(opts, root, active.State{})
 		if err != nil {
-			fmt.Fprintf(stderr, "versio-launcher: versio is not installed yet and the latest release could not be installed: %v\n", err)
+			report(opts, stderr, "could not download versio; check your connection and try again", err)
 			return 1
 		}
 		state = res.State
 		fmt.Fprintf(stderr, "versio: installed %s\n", state.ActiveVersion)
+	case errors.Is(err, fs.ErrNotExist):
+		report(opts, stderr, "not installed yet; run versio to install it", err)
+		return 1
 	case err != nil:
-		fmt.Fprintf(stderr, "versio-launcher: no usable active release in %s: %v\n", root, err)
+		report(opts, stderr, "the installation is damaged; reinstall versio to fix it", err)
 		return 1
 	case wantsUpdate(opts, childArgs):
 		state = tryUpdate(opts, root, state, stderr)
 	}
 
-	bin, err := payload(root, state, stderr)
+	bin, err := payload(opts, root, state, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "versio-launcher: no usable active release in %s: %v\n", root, err)
+		report(opts, stderr, "the installation is damaged; reinstall versio to fix it", err)
 		return 1
 	}
 
@@ -103,9 +107,19 @@ func Run(opts Options, args []string, stdin io.Reader, stdout, stderr io.Writer)
 		}
 		return 1 // terminated by a signal
 	default:
-		fmt.Fprintf(stderr, "versio-launcher: run %s: %v\n", bin, err)
+		report(opts, stderr, "could not start versio", err)
 		return 1
 	}
+}
+
+// report tells the user what went wrong in plain terms. The underlying error
+// is technical (paths, network details), so it is added only in debug mode.
+func report(opts Options, stderr io.Writer, msg string, err error) {
+	if opts.Debug {
+		fmt.Fprintf(stderr, "versio: %s: %v\n", msg, err)
+		return
+	}
+	fmt.Fprintf(stderr, "versio: %s\n", msg)
 }
 
 func wantsUpdate(opts Options, childArgs []string) bool {
@@ -126,7 +140,7 @@ func tryUpdate(opts Options, root string, cur active.State, stderr io.Writer) ac
 	res, err := runUpdate(opts, root, cur)
 	if err != nil {
 		if opts.Debug {
-			fmt.Fprintf(stderr, "versio-launcher: update skipped: %v\n", err)
+			fmt.Fprintf(stderr, "versio: update skipped: %v\n", err)
 		}
 		return cur
 	}
@@ -159,7 +173,7 @@ func newHTTPClient() *http.Client {
 
 // payload returns the executable to run: the active release's, or the
 // previous release's if the active one is unusable.
-func payload(root string, s active.State, stderr io.Writer) (string, error) {
+func payload(opts Options, root string, s active.State, stderr io.Writer) (string, error) {
 	bin, err := releaseBinary(root, s.ActiveVersion)
 	if err == nil || s.PreviousVersion == "" {
 		return bin, err
@@ -168,7 +182,7 @@ func payload(root string, s active.State, stderr io.Writer) (string, error) {
 	if prevErr != nil {
 		return "", err
 	}
-	fmt.Fprintf(stderr, "versio-launcher: active release unusable (%v); running previous release %s\n", err, s.PreviousVersion)
+	report(opts, stderr, "the newest version is damaged; running "+s.PreviousVersion+" instead", err)
 	return prev, nil
 }
 

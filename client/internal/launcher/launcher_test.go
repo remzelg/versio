@@ -124,8 +124,13 @@ func TestRunPreservesExitCode(t *testing.T) {
 func TestRunNoActiveRelease(t *testing.T) {
 	root := newRoot(t)
 	code, out, errs := run(t, "--root", root)
-	if code == 0 || out != "" || !strings.Contains(errs, root) || !strings.Contains(errs, active.StateFile) {
+	if code == 0 || out != "" || errs != "versio: not installed yet; run versio to install it\n" {
 		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
+	}
+	// The technical detail appears only in debug mode.
+	_, _, errs = runWith(t, Options{Debug: true}, "--root", root)
+	if !strings.Contains(errs, root) || !strings.Contains(errs, active.StateFile) {
+		t.Fatalf("debug stderr %q lacks detail", errs)
 	}
 }
 
@@ -135,8 +140,8 @@ func TestRunRejectsInvalidActiveVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	setCurrent(t, root, "../elsewhere")
-	code, out, errs := run(t, "--root", root)
-	if code == 0 || out != "" || !strings.Contains(errs, "invalid version") {
+	code, out, errs := runWith(t, Options{Debug: true}, "--root", root)
+	if code == 0 || out != "" || !strings.Contains(errs, "damaged") || !strings.Contains(errs, "invalid version") {
 		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
 	}
 }
@@ -144,7 +149,7 @@ func TestRunRejectsInvalidActiveVersion(t *testing.T) {
 func TestRunMissingBinary(t *testing.T) {
 	root := newRoot(t)
 	setCurrent(t, root, "0.1.0")
-	code, out, errs := run(t, "--root", root)
+	code, out, errs := runWith(t, Options{Debug: true}, "--root", root)
 	want := filepath.Join(root, "releases", "0.1.0", release.BinaryName(runtime.GOOS))
 	if code == 0 || out != "" || !strings.Contains(errs, want) {
 		t.Fatalf("got code=%d stdout=%q stderr=%q, want mention of %s", code, out, errs, want)
@@ -157,7 +162,7 @@ func TestRunFallsBackToPreviousRelease(t *testing.T) {
 	installFixture(t, root, "0.1.0")
 	setState(t, root, active.State{ActiveVersion: "0.2.0", PreviousVersion: "0.1.0"}) // 0.2.0 missing
 	code, out, errs := run(t, "--root", root)
-	if code != 0 || out != "release=0.1.0 args=[]\n" || !strings.Contains(errs, "running previous release 0.1.0") {
+	if code != 0 || out != "release=0.1.0 args=[]\n" || !strings.Contains(errs, "running 0.1.0 instead") {
 		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
 	}
 }
@@ -251,7 +256,7 @@ func TestRunFirstRunFailureExplains(t *testing.T) {
 	h.Set(releasetest.ManifestPath+release.SignatureSuffix, []byte("bogus"))
 
 	code, out, errs := runWith(t, opts, "--root", root)
-	if code == 0 || out != "" || !strings.Contains(errs, "not installed yet") {
+	if code == 0 || out != "" || !strings.Contains(errs, "could not download versio") {
 		t.Fatalf("got code=%d stdout=%q stderr=%q", code, out, errs)
 	}
 	if _, err := os.Stat(filepath.Join(root, active.StateFile)); !os.IsNotExist(err) {
@@ -264,7 +269,7 @@ func TestRunFirstRunVersionStaysOffline(t *testing.T) {
 	h, opts := updateOptions(t)
 
 	code, _, errs := runWith(t, opts, "--root", root, "--version")
-	if code == 0 || !strings.Contains(errs, active.StateFile) {
+	if code == 0 || !strings.Contains(errs, "not installed yet") {
 		t.Fatalf("got code=%d stderr=%q", code, errs)
 	}
 	if n := h.Requests(""); n != 0 {
